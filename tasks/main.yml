@@ -1,0 +1,57 @@
+---
+# tasks file for wsl-keeagent
+
+- name: "Require Correct Linux Distribution"
+  assert:
+    that: ansible_distribution == 'Ubuntu' and
+          ansible_distribution_version is version_compare('18.0.4', '>=') and
+          'microsoft' in ansible_kernel | lower
+    msg:  "This Linux distribution '{{ ansible_distribution }} {{ ansible_distribution_version }}' is not supported by the role."
+  tags: wsl-keeagent
+
+- name: "Check variables"
+  assert:
+    that:
+     - wsl_keeagent_msysgit_socket != ''
+    msg: "The variable wsl_keeagent_msysgit_socket must be set to an existing file"
+  tags: wsl-keeagent
+
+- name: "Integration script"
+  become: yes
+  copy:
+    src:   msysgit2unix-socket.py
+    dest:  "{{ wsl_keeagent_script_path }}/msysgit2unix-socket.py"
+    owner: root
+    group: root
+    mode:  0755
+  tags: wsl-keeagent
+
+- name: "Service script"
+  become: yes
+  template:
+    src:   wsl-keeagent.j2
+    dest:  "/etc/init.d/{{ wsl_keeagent_service }}"
+    owner: root
+    group: root
+    mode:  0755
+  tags: wsl-keeagent
+
+- name: "Enable and Start service"
+  become: yes
+  service:
+    name:    "{{ wsl_keeagent_service }}"
+    enabled: yes
+    state:   started
+    use:     sysvinit
+  when: wsl_keeagent_enabled | bool | default(True)
+  tags: wsl-keeagent
+
+- name: "Stop and disable service"
+  become: yes
+  service:
+    name:    "{{ wsl_keeagent_service }}"
+    enabled: no
+    state:   stopped
+    use:     sysvinit
+  when: not wsl_keeagent_enabled | bool | default(True)
+  tags: wsl-keeagent

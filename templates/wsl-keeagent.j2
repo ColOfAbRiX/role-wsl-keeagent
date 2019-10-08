@@ -1,0 +1,91 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:           {{ wsl_keeagent_service }}
+# Required-Start:     $syslog $remote_fs
+# Required-Stop:      $syslog $remote_fs
+# Should-Start:
+# Should-Stop:
+# Default-Start:      2 3 4 5
+# Default-Stop:       0 1 6
+# Short-Description:  WSL-KeeAgent integration service
+# Description:
+#  Integrates Keepass KeeAgent into Windows Subsystem for Linux by creating a tunnel from a Unit
+#  socket to the msysgit socket provided by Keepass Keeagent
+### END INIT INFO
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+BASE={{ wsl_keeagent_service }}
+
+DAEMON_BIN={{ wsl_keeagent_script_path }}/msysgit2unix-socket.py
+DAEMON_DESC="$BASE"
+# This is the pid file managed by the script itself
+DAEMON_PIDFILE=/var/run/msysgit2unix-socket.pid
+# This is the pid file created/managed by start-stop-daemon
+DAEMON_SSD_PIDFILE="/var/run/$BASE-ssd.pid"
+DAEMON_LOGFILE="/var/log/$BASE.log"
+DAEMON_OPTS=--pidfile $DAEMON_PIDFILE --timeout 3 {{ wsl_keeagent_msysgit_socket }}:{{ wsl_keeagent_ssh_agent_socket }}
+
+# Get lsb functions
+. /lib/lsb/init-functions
+
+# Check wsl-keeagent is present
+if [ ! -x $DAEMON_BIN ]; then
+    log_failure_msg "$DAEMON_BIN not present or not executable"
+    exit 1
+fi
+
+fail_unless_root() {
+    if [ "$(id -u)" != '0' ]; then
+        log_failure_msg "$DAEMON_DESC must be run as root"
+        exit 1
+    fi
+}
+
+case "$1" in
+    start)
+        fail_unless_root
+
+        log_begin_msg "Starting $DAEMON_DESC: $BASE"
+        start-stop-daemon --start --background \
+            --no-close \
+            --exec "$DAEMON_BIN" \
+            --pidfile "$DAEMON_SSD_PIDFILE" \
+            --make-pidfile \
+            -- \
+                -p "$DAEMON_PIDFILE" \
+                $DAEMON_OPTS \
+                    >> "$DAEMON_LOGFILE" 2>&1
+        log_end_msg $?
+        ;;
+
+    stop)
+        fail_unless_root
+        if [ -f "$DAEMON_SSD_PIDFILE" ]; then
+            log_begin_msg "Stopping $DAEMON_DESC: $BASE"
+            start-stop-daemon --stop --pidfile "$DAEMON_SSD_PIDFILE" --retry 10
+            log_end_msg $?
+        else
+            log_warning_msg "$BASE already stopped - file $DAEMON_SSD_PIDFILE not found."
+        fi
+        ;;
+
+    restart)
+        fail_unless_root
+        daemon_pid=`cat "$DAEMON_SSD_PIDFILE" 2>/dev/null`
+        [ -n "$daemon_pid" ] \
+            && ps -p $daemon_pid > /dev/null 2>&1 \
+            && $0 stop
+        $0 start
+        ;;
+
+    status)
+        status_of_proc -p "$DAEMON_SSD_PIDFILE" "$DAEMON_BIN" "$DAEMON_DESC"
+        ;;
+
+    *)
+        echo "Usage: service $BASE {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+# vim: ft=sh:ts=4:sw=4
