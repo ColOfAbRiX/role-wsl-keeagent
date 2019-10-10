@@ -5,9 +5,9 @@ msysGit to Unix socket proxy
 ============================
 
 This small script is intended to help use msysGit sockets with the new Windows Linux Subsystem (aka
-Bash for Windows). It was specifically designed to pass SSH keys from the KeeAgent module of
-KeePass secret management application to the ssh utility running in the WSL (it only works with
-Linux sockets). However, my guess is that it will have uses for other applications as well.
+Bash for Windows). It was specifically designed to pass SSH keys from the KeeAgent module of KeePass
+secret management application to the ssh utility running in the WSL (it only works with Linux
+sockets). However, my guess is that it will have uses for other applications as well.
 
 In order to efficiently use it, I add it at the end of the ~/.bashrc file, like this:
     export SSH_AUTH_SOCK="/tmp/.ssh-auth-sock"
@@ -33,19 +33,21 @@ Optional arguments:
                         msysGit socket.
   --listen-backlog N    Maximum number of simultaneous connections to the Unix
                         socket.
+  --mode mode           File system permissions of the socket.
   --timeout N           Timeout.
   --pidfile FILE        Where to write the PID file.
 """
 
 import argparse
 import asyncore
+import atexit
+import errno
 import os
 import re
 import signal
 import socket
 import sys
-import errno
-import atexit
+
 
 # NOTE: Taken from http://stackoverflow.com/a/6940314
 def PidExists(pid):
@@ -54,6 +56,7 @@ def PidExists(pid):
     """
     if pid < 0:
         return False
+
     if pid == 0:
         # According to "man 2 kill" PID 0 refers to every process
         # in the process group of the calling process.
@@ -76,6 +79,7 @@ def PidExists(pid):
     else:
         return True
 
+
 class UpstreamHandler(asyncore.dispatcher_with_send):
     """
     This class handles the connection to the TCP socket listening on localhost that makes the
@@ -86,7 +90,9 @@ class UpstreamHandler(asyncore.dispatcher_with_send):
         self.out_buffer = b''
         self.downstream_dispatcher = downstream_dispatcher
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.connect((b'localhost', UpstreamHandler.load_tcp_port_from_msysgit_socket_file(upstream_path)))
+        self.connect(
+            (b'localhost', UpstreamHandler.load_tcp_port_from_msysgit_socket_file(upstream_path))
+        )
 
     @staticmethod
     def load_tcp_port_from_msysgit_socket_file(path):
@@ -130,10 +136,11 @@ class MSysGit2UnixSocketServer(asyncore.dispatcher):
     """
     This is the "server" listening for connections on the Unix socket.
     """
-    def __init__(self, upstream_socket_path, unix_socket_path):
+    def __init__(self, upstream_socket_path, unix_socket_path, mode):
         asyncore.dispatcher.__init__(self)
         self.upstream_socket_path = upstream_socket_path
         self.create_socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        os.chmod(upstream_socket_path, mode)
         self.bind(unix_socket_path)
         self.listen(config.listen_backlog)
 
@@ -156,7 +163,8 @@ def build_config():
             setattr(namespace, self.dest, proxies)
 
     parser = argparse.ArgumentParser(
-        description='Transforms msysGit compatible sockets to Unix sockets for the Windows Linux Subsystem.'
+        description='Transforms msysGit compatible sockets to Unix sockets for the ' +
+                    'Windows Linux Subsystem.'
     )
     parser.add_argument(
         b'--downstream-buffer-size',
@@ -188,10 +196,14 @@ def build_config():
     )
     parser.add_argument(
         b'--pidfile',
-        default=b'
-        tmp/msysgit2unix-
-        ocket.pid', metavar=b'FILE',
+        default='/tmp/msysgit2unix-socket.pid',
+        metavar=b'FILE',
         help=b'Where to write the PID file.'
+    )
+    parser.add_argument(
+        b'--mode',
+        default='0777',
+        help=b'File system permissions of the socket.'
     )
     parser.add_argument(
         b'proxies',
@@ -238,6 +250,7 @@ def daemonize():
     with open(config.pidfile, 'w+') as f:
         f.write(b'%s\n' % pid)
 
+
 def cleanup():
     try:
         for pair in config.proxies:
@@ -248,6 +261,7 @@ def cleanup():
     except Exception as e:
         sys.stderr.write(b'%s' % (e))
 
+
 if __name__ == b'__main__':
     config = build_config()
 
@@ -256,14 +270,16 @@ if __name__ == b'__main__':
         f = open(config.pidfile, 'r')
         if PidExists(int(f.readline().strip())):
             sys.stderr.write(
-                b'%s: Already running (or at least pidfile "%s" already exists).\n' % (sys.argv[0], config.pidfile)
+                b'%s: Already running (or at least pidfile "%s" already exists).\n' % (
+                    sys.argv[0], config.pidfile
+                )
             )
             sys.exit(0)
         else:
             cleanup()
 
     for pair in config.proxies:
-        MSysGit2UnixSocketServer(pair[0], pair[1])
+        MSysGit2UnixSocketServer(pair[0], pair[1], config.mode)
 
     daemonize()
 
@@ -271,5 +287,6 @@ if __name__ == b'__main__':
     atexit.register(cleanup)
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGHUP, cleanup)
 
     asyncore.loop(config.timeout, True)
