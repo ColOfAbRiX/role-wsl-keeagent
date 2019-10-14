@@ -140,9 +140,10 @@ class MSysGit2UnixSocketServer(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self)
         self.upstream_socket_path = upstream_socket_path
         self.create_socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        os.chmod(upstream_socket_path, mode)
         self.bind(unix_socket_path)
         self.listen(config.listen_backlog)
+        self.mode = mode
+        os.chmod(unix_socket_path, mode)
 
     def handle_accept(self):
         pair = self.accept()
@@ -263,30 +264,37 @@ def cleanup():
 
 
 if __name__ == b'__main__':
-    config = build_config()
+    try:
+        config = build_config()
 
-    if os.path.exists(config.pidfile):
-        # Check if process is really running, if not run cleanup
-        f = open(config.pidfile, 'r')
-        if PidExists(int(f.readline().strip())):
-            sys.stderr.write(
-                b'%s: Already running (or at least pidfile "%s" already exists).\n' % (
-                    sys.argv[0], config.pidfile
+        if os.path.exists(config.pidfile):
+            # Check if process is really running, if not run cleanup
+            f = open(config.pidfile, 'r')
+            if PidExists(int(f.readline().strip())):
+                sys.stderr.write(
+                    b'%s: Already running (or at least pidfile "%s" already exists).\n' % (
+                        sys.argv[0], config.pidfile
+                    )
                 )
-            )
-            sys.exit(0)
-        else:
-            cleanup()
+                sys.exit(1)
+            else:
+                cleanup()
 
-    for pair in config.proxies:
-        MSysGit2UnixSocketServer(pair[0], pair[1], config.mode)
+        mode = int(config.mode, base=8)
+        for pair in config.proxies:
+            MSysGit2UnixSocketServer(pair[0], pair[1], mode)
 
-    daemonize()
+        daemonize()
 
-    # Redundant cleanup :)
-    atexit.register(cleanup)
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
-    signal.signal(signal.SIGHUP, cleanup)
+        # Redundant cleanup :)
+        atexit.register(cleanup)
+        signal.signal(signal.SIGINT, cleanup)
+        signal.signal(signal.SIGTERM, cleanup)
+        signal.signal(signal.SIGHUP, cleanup)
 
-    asyncore.loop(config.timeout, True)
+        asyncore.loop(config.timeout, True)
+
+    except Exception as e:
+        # General exception management returning an error code to the system
+        print(e)
+        sys.exit(1)

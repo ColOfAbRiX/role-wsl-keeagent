@@ -41,10 +41,18 @@ fail_unless_root() {
 case "$1" in
     start)
         fail_unless_root
-
         log_begin_msg "Starting $DAEMON_DESC: $BASE"
-        $DAEMON_BIN --pidfile $DAEMON_PIDFILE $DAEMON_OPTS {{ wsl_keeagent_msysgit_socket }}:{{ wsl_keeagent_ssh_agent_socket }} >> "$DAEMON_LOGFILE" 2>&1 &
-        log_end_msg $?
+
+        # Start the daemon
+        $DAEMON_BIN \
+            --pidfile $DAEMON_PIDFILE \
+            $DAEMON_OPTS \
+            {{ wsl_keeagent_msysgit_socket }}:{{ wsl_keeagent_ssh_agent_socket }} \
+                >> "$DAEMON_LOGFILE" 2>&1
+        result=$?
+
+        log_end_msg $result
+        exit $result
         ;;
 
     stop)
@@ -53,9 +61,17 @@ case "$1" in
         if [ -f "$DAEMON_PIDFILE" ]; then
             log_begin_msg "Stopping $DAEMON_DESC: $BASE"
             daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
-            [ -n "$daemon_pid" ] && kill -SIGTERM $daemon_pid
-            rm $DAEMON_PIDFILE
+
+            # Stop the process
+            [ -n "$daemon_pid" ] && \
+                ps -p $daemon_pid > /dev/null 2>&1 && \
+                kill -SIGTERM $daemon_pid
             log_end_msg $?
+
+            [ -f "$DAEMON_PIDFILE" ] && \
+                rm "$DAEMON_PIDFILE" > /dev/null 2>&1
+
+            exit 0
         else
             log_warning_msg "$BASE already stopped - file $DAEMON_PIDFILE not found."
         fi
@@ -65,9 +81,9 @@ case "$1" in
         fail_unless_root
 
         daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
-        [ -n "$daemon_pid" ] \
-            && ps -p $daemon_pid > /dev/null 2>&1 \
-            && $0 stop
+        [ -n "$daemon_pid" ] && ps -p $daemon_pid > /dev/null 2>&1 && \
+            $0 stop
+
         $0 start
         ;;
 
