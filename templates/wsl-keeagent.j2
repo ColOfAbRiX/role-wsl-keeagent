@@ -66,12 +66,18 @@ case "$1" in
             [ -n "$daemon_pid" ] && \
                 ps -p $daemon_pid > /dev/null 2>&1 && \
                 kill -SIGTERM $daemon_pid
-            log_end_msg $?
 
-            [ -f "$DAEMON_PIDFILE" ] && \
-                rm "$DAEMON_PIDFILE" > /dev/null 2>&1
+            if [ -n "$daemon_pid" ] ; then
+                # Test if still running
+                ps -p $daemon_pid > /dev/null 2>&1
+                result=$?
+                # Removing PID file
+                [ -f "$DAEMON_PIDFILE" ] && \
+                    rm "$DAEMON_PIDFILE" > /dev/null 2>&1
+            fi
 
-            exit 0
+            log_end_msg $result
+            exit $result
         else
             log_warning_msg "$BASE already stopped - file $DAEMON_PIDFILE not found."
         fi

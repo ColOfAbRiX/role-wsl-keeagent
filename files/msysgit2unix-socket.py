@@ -51,7 +51,8 @@ import sys
 
 # NOTE: Taken from http://stackoverflow.com/a/6940314
 def PidExists(pid):
-    """Check whether pid exists in the current process table.
+    """
+    Check whether pid exists in the current process table.
     UNIX only.
     """
     if pid < 0:
