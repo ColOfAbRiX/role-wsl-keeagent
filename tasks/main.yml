@@ -20,7 +20,7 @@
   become: yes
   copy:
     src:   msysgit2unix-socket.py
-    dest:  "{{ wsl_keeagent_script_path }}/msysgit2unix-socket.py"
+    dest:  "{{ wsl_keeagent_script_path }}/{{ wsl_keeagent_script_name }}"
     owner: root
     group: root
     mode:  0755

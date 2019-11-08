@@ -6,3 +6,4 @@ wsl_keeagent_service:          wsl-keeagent
 wsl_keeagent_msysgit_socket:   ''
 wsl_keeagent_ssh_agent_socket: /tmp/.ssh-auth-sock
 wsl_keeagent_script_path:      /usr/local/bin
+wsl_keeagent_script_name:      msysgit2unix-socket.py
