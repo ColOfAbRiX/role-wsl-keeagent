@@ -43,7 +43,7 @@
     enabled: yes
     state:   started
     use:     sysvinit
-  when: wsl_keeagent_enabled | bool | default(True)
+  when: wsl_keeagent_enabled | default(True) | bool
   tags: wsl-keeagent
 
 - name: "Stop and disable service"
@@ -53,5 +53,16 @@
     enabled: no
     state:   stopped
     use:     sysvinit
-  when: not wsl_keeagent_enabled | bool | default(True)
+  when: not wsl_keeagent_enabled | default(True) | bool
   tags: wsl-keeagent
+
+# Fixing a problem with wsl-keeagent service startup
+- block:
+
+   - service: name=wsl-keeagent state=stopped
+     changed_when: false
+
+   - service: name=wsl-keeagent state=started
+     changed_when: false
+
+  when: wsl_keeagent_enabled | default(True) | bool
