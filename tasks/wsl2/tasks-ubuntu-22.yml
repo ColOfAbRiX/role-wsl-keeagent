@@ -1,0 +1,73 @@
+---
+- name: "Install dependencies"
+  apt:
+    name: "{{ wsl_keeagent_dependencies }}"
+    state: present
+  tags: wsl-keeagent
+
+- name: "Get wsl-ssh-agent release info"
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ wsl_keeagent_github_repo }}/releases/latest"
+    return_content: true
+  register: wsl_keeagent_latest_release
+  when: wsl_keeagent_version | length == 0
+  tags: wsl-keeagent
+
+- name: "Get specific wsl-ssh-agent release info"
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ wsl_keeagent_github_repo }}/releases/tags/v{{ wsl_keeagent_version }}"
+    return_content: true
+  register: wsl_keeagent_release
+  when: wsl_keeagent_version | length > 0
+  tags: wsl-keeagent
+
+- name: "Set facts for latest release"
+  ansible.builtin.set_fact:
+    wsl_keeagent_version: "{{ wsl_keeagent_latest_release.json.tag_name | regex_replace('^v', '') }}"
+    wsl_keeagent_download_url: "{{ wsl_keeagent_latest_release.json.assets | map(attribute='browser_download_url') | first }}"
+  when: wsl_keeagent_latest_release.json is defined
+  tags: wsl-keeagent
+
+- name: "Set facts for specific release"
+  ansible.builtin.set_fact:
+    wsl_keeagent_download_url: "{{ (wsl_keeagent_release.json | default({'assets': [{'browser_download_url': ''}]})).assets[0].browser_download_url }}"
+  when: wsl_keeagent_release.json is defined
+  tags: wsl-keeagent
+
+- name: "Download wsl-ssh-agent binary"
+  ansible.builtin.get_url:
+    url: "{{ wsl_keeagent_download_url }}"
+    dest: "{{ wsl_keeagent_bin_path }}"
+    mode: '0755'
+    owner: root
+    group: root
+    force: true
+  tags: wsl-keeagent
+
+- name: "Deploy wsl-keeagent systemd service"
+  ansible.builtin.template:
+    src: "{{ templates_root }}/systemd_service.j2"
+    dest: "/etc/systemd/system/{{ wsl_keeagent_service_name }}.service"
+    mode: '0644'
+    owner: root
+    group: root
+  notify:
+    - Reload systemd
+    - Restart wsl-keeagent
+  tags: wsl-keeagent
+
+- name: "Enable and Start wsl-keeagent service"
+  ansible.builtin.service:
+    name: "{{ wsl_keeagent_service_name }}"
+    enabled: true
+    state: started
+  tags: wsl-keeagent
+
+- name: "Create profile.d script for SSH_AUTH_SOCK"
+  ansible.builtin.template:
+    src: "{{ templates_root }}/profile_script.j2"
+    dest: /etc/profile.d/wsl-keeagent.sh
+    mode: '0755'
+    owner: root
+    group: root
+  tags: wsl-keeagent

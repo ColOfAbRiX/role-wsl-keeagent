@@ -1,68 +1,23 @@
 ---
-# tasks file for wsl-keeagent
-
 - name: "Require Correct Linux Distribution"
-  assert:
-    that: ansible_distribution == 'Ubuntu' and
-          ansible_distribution_version is version_compare('18.0.4', '>=') and
-          'microsoft' in ansible_kernel | lower
-    msg:  "This Linux distribution '{{ ansible_distribution }} {{ ansible_distribution_version }}' is not supported by the role."
-  tags: wsl-keeagent
-
-- name: "Check variables"
-  assert:
+  ansible.builtin.assert:
     that:
-     - wsl_keeagent_msysgit_socket != ''
-    msg: "The variable wsl_keeagent_msysgit_socket must be set to an existing file"
+      ansible_distribution == 'Ubuntu' and ansible_distribution_version is version('22.0.0', '>=') and
+      'microsoft' in ansible_kernel | lower
+    msg: "This Linux distribution '{{ ansible_distribution }} {{ ansible_distribution_version }}' is not supported by the role."
+    quiet: true
   tags: wsl-keeagent
 
-- name: "Integration script"
-  become: yes
-  copy:
-    src:   msysgit2unix-socket.py
-    dest:  "{{ wsl_keeagent_script_path }}/{{ wsl_keeagent_script_name }}"
-    owner: root
-    group: root
-    mode:  0755
+- name: "Detect WSL version"
+  ansible.builtin.set_fact:
+    wsl_version: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}"
+    templates_root: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}/{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}"
   tags: wsl-keeagent
 
-- name: "Service script"
-  become: yes
-  template:
-    src:   wsl-keeagent.j2
-    dest:  "/etc/init.d/{{ wsl_keeagent_service }}"
-    owner: root
-    group: root
-    mode:  0755
+- name: "Include OS/WSL Variables"
+  ansible.builtin.include_vars: "{{ wsl_version }}/vars-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}.yml"
   tags: wsl-keeagent
 
-- name: "Enable and Start service"
-  become: yes
-  service:
-    name:    "{{ wsl_keeagent_service }}"
-    enabled: yes
-    state:   started
-    use:     sysvinit
-  when: wsl_keeagent_enabled | default(True) | bool
+- name: "Run OS/WSL Tasks"
+  ansible.builtin.include_tasks: "{{ wsl_version }}/tasks-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}.yml"
   tags: wsl-keeagent
-
-- name: "Stop and disable service"
-  become: yes
-  service:
-    name:    "{{ wsl_keeagent_service }}"
-    enabled: no
-    state:   stopped
-    use:     sysvinit
-  when: not wsl_keeagent_enabled | default(True) | bool
-  tags: wsl-keeagent
-
-# Fixing a problem with wsl-keeagent service startup
-- block:
-
-   - service: name=wsl-keeagent state=stopped
-     changed_when: false
-
-   - service: name=wsl-keeagent state=started
-     changed_when: false
-
-  when: wsl_keeagent_enabled | default(True) | bool

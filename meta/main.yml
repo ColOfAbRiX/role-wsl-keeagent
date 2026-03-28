@@ -1,8 +1,23 @@
+---
+# meta file for wsl-keeagent
+
 galaxy_info:
-  author: Fabrizio Colonna
-  description: Integration between Keepass KeeAgent and WSL
+  author: Fabrizio
+  description: WSL2 KeeAgent integration role
+  company: ""
   license: MIT
-  min_ansible_version: 2.4
-  galaxy_tags: []
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+        - noble
+  galaxy_tags:
+    - wsl
+    - ssh
+    - keepass
+    - keeagent
+    - wsl2
 
 dependencies: []

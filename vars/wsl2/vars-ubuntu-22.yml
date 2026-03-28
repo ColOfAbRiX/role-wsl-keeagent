@@ -1,0 +1,11 @@
+---
+# vars file for wsl-keeagent
+
+wsl_keeagent_dependencies:
+ - python3-jmespath
+
+# User to run the wsl-ssh-agent service as
+wsl_keeagent_service_user: root
+
+# Service name
+wsl_keeagent_service_name: wsl-keeagent

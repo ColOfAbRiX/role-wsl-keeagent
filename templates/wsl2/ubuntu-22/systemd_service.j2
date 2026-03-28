@@ -1,0 +1,13 @@
+[Unit]
+Description=WSL SSH Agent (KeeAgent integration)
+After=network.target
+
+[Service]
+Type=simple
+User={{ wsl_keeagent_service_user }}
+ExecStart={{ wsl_keeagent_bin_path }} -socket {{ wsl_keeagent_socket }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
