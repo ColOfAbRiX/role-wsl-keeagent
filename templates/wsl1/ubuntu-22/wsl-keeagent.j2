@@ -1,0 +1,153 @@
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:           {{ wsl_keeagent_service }}
+# Required-Start:     $syslog $remote_fs
+# Required-Stop:      $syslog $remote_fs
+# Should-Start:
+# Should-Stop:
+# Default-Start:      2 3 4 5
+# Default-Stop:       0 1 6
+# Short-Description:  WSL-KeeAgent integration service
+# Description:
+#  Integrates Keepass KeeAgent into Windows Subsystem for Linux by creating a
+#  tunnel from a Unix socket to the msysgit socket provided by Keepass Keeagent
+### END INIT INFO
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+BASE="{{ wsl_keeagent_service }}"
+DAEMON_SCRIPT="{{ wsl_keeagent_script_name }}"
+DAEMON_DESC="$BASE"
+DAEMON_BIN="{{ wsl_keeagent_script_path }}/$DAEMON_SCRIPT"
+DAEMON_PIDFILE="/var/run/{{ (wsl_keeagent_script_name | splitext)[0] }}.pid"
+DAEMON_LOGFILE="/var/log/$BASE.log"
+DAEMON_OPTS="--timeout 3"
+MSYSGIT_PATH="{{ wsl_keeagent_msysgit_socket }}"
+SOCKET_PATH="{{ wsl_keeagent_ssh_agent_socket }}"
+
+# Get lsb functions
+source /lib/lsb/init-functions
+
+# Check wsl-keeagent is present
+if [[ ! -x $DAEMON_BIN ]]; then
+    log_failure_msg "$DAEMON_BIN not present or not executable"
+    exit 1
+fi
+
+fail_unless_root() {
+    if [[ "$(id -u)" != '0' ]]; then
+        log_failure_msg "$DAEMON_DESC must be run as root"
+        exit 1
+    fi
+}
+
+case "$1" in
+    start)
+        fail_unless_root
+        log_begin_msg "Starting $DAEMON_DESC: $BASE"
+
+        # Check if process is actually running
+        daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
+        if [[ -n "$daemon_pid" && -f "$DAEMON_PIDFILE" ]]; then
+            # Verify the process is actually running and is our script
+            if ps -p "$daemon_pid" -o comm= 2>/dev/null | grep -q "python3" && \
+               ps -p "$daemon_pid" -o args= 2>/dev/null | grep -q "$DAEMON_SCRIPT"; then
+                if [[ -S "$SOCKET_PATH" ]]; then
+                    log_warning_msg "$BASE already running."
+                    exit 0
+                fi
+            fi
+        fi
+
+        # If we get here, either no PID file, no process, or stale files - clean up and start fresh
+        if [[ -f "$DAEMON_PIDFILE" || -S "$SOCKET_PATH" ]]; then
+            log_warning_msg "Cleaning up stale files before starting..."
+            rm -f "$DAEMON_PIDFILE" "$SOCKET_PATH" 2>/dev/null
+        fi
+
+        # Start the daemon
+        $DAEMON_BIN \
+            --pidfile $DAEMON_PIDFILE \
+            $DAEMON_OPTS \
+            "$MSYSGIT_PATH:$SOCKET_PATH" \
+                >> "$DAEMON_LOGFILE" 2>&1
+        sleep 1
+
+        # Discover pid from pidfile
+        daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
+        if [[ -n "$daemon_pid" && -f "$DAEMON_PIDFILE" && -S "$SOCKET_PATH" ]] ; then
+            log_success_msg "$BASE is running"
+            exit 0
+        else
+            log_failure_msg "$BASE is NOT running"
+            exit 1
+        fi
+        ;;
+
+    stop)
+        fail_unless_root
+        log_begin_msg "Stopping $DAEMON_DESC: $BASE"
+
+        # First try graceful termination using pidfile
+        if [[ -f "$DAEMON_PIDFILE" ]]; then
+            daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
+            if [[ -n "$daemon_pid" ]] && ps -p "$daemon_pid" >/dev/null 2>&1; then
+                kill -SIGTERM "$daemon_pid"
+                sleep 2
+                # If still running, force kill
+                if ps -p "$daemon_pid" >/dev/null 2>&1; then
+                    kill -SIGKILL "$daemon_pid"
+                    sleep 1
+                fi
+            fi
+        fi
+
+        # Clean up any remaining processes by script name
+        remaining_pid="$(pgrep -f $DAEMON_SCRIPT 2>/dev/null)"
+        if [[ -n "$remaining_pid" ]]; then
+            kill -SIGTERM "$remaining_pid" 2>/dev/null || true
+            sleep 1
+            # Force kill if still running
+            if ps -p "$remaining_pid" >/dev/null 2>&1; then
+                kill -SIGKILL "$remaining_pid" 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+
+        # Clean up files
+        rm -f "$DAEMON_PIDFILE" "$SOCKET_PATH" 2>/dev/null
+
+        # Check if we successfully stopped everything
+        if [[ -z "$(pgrep -f $DAEMON_SCRIPT 2>/dev/null)" ]]; then
+            log_success_msg "$BASE is stopped."
+        else
+            log_warning_msg "$BASE may still be running."
+        fi
+        ;;
+
+    restart)
+        fail_unless_root
+
+        daemon_pid="$(cat $DAEMON_PIDFILE 2>/dev/null)"
+            [[ -n "$daemon_pid" ]] && ps -p $daemon_pid > /dev/null 2>&1 && \
+            $0 stop
+
+        $0 start
+        ;;
+
+    status)
+        status_of_proc -p "$DAEMON_PIDFILE" "$DAEMON_BIN" "$DAEMON_DESC"
+        ;;
+
+    debug)
+        shift
+        /bin/bash -eux $0 $@
+        ;;
+
+    *)
+        echo "Usage: service $BASE {start|stop|restart|status|debug <action>}"
+        exit 1
+        ;;
+esac
+
+# vim: ft=sh:ts=4:sw=4

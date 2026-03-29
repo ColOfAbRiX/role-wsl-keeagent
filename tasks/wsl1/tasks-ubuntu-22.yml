@@ -1,0 +1,65 @@
+---
+
+- name: "Check variables"
+  assert:
+    that:
+     - wsl_keeagent_msysgit_socket != ''
+    msg: "The variable wsl_keeagent_msysgit_socket must be set to an existing file"
+  tags: wsl-keeagent
+
+- name: "Integration script"
+  become: true
+  copy:
+    src:   msysgit2unix-socket.py
+    dest:  "{{ wsl_keeagent_script_path }}/{{ wsl_keeagent_script_name }}"
+    owner: root
+    group: root
+    mode:  '0755'
+  tags: wsl-keeagent
+
+- name: "Service script"
+  become: true
+  template:
+    src:   wsl-keeagent.j2
+    dest:  "/etc/init.d/{{ wsl_keeagent_service }}"
+    owner: root
+    group: root
+    mode:  '0755'
+  tags: wsl-keeagent
+
+- name: "Enable and Start service"
+  become: true
+  sysvinit:
+    name:      "{{ wsl_keeagent_service }}"
+    state:     started
+    enabled:   true
+    runlevels: ['3', '5']
+  when: wsl_keeagent_enabled | default(true) | bool
+  tags: wsl-keeagent
+
+- name: "Stop and disable service"
+  become: true
+  sysvinit:
+    name:      "{{ wsl_keeagent_service }}"
+    state:     stopped
+    enabled:   false
+    runlevels: ['3', '5']
+  when: not wsl_keeagent_enabled | default(true) | bool
+  tags: wsl-keeagent
+
+# Fixing a problem with wsl-keeagent service startup
+- block:
+
+   - name: "Stop wsl-keeagent service"
+     service:
+       name: wsl-keeagent
+       state: stopped
+     changed_when: false
+
+   - name: "Start wsl-keeagent service"
+     service:
+       name: wsl-keeagent
+       state: started
+     changed_when: false
+
+  when: wsl_keeagent_enabled | default(true) | bool

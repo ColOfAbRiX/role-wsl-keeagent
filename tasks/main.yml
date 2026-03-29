@@ -12,6 +12,7 @@
   ansible.builtin.set_fact:
     wsl_version: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}"
     templates_root: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}/{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}"
+    files_root: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}/{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}"
   tags: wsl-keeagent
 
 - name: "Include OS/WSL Variables"

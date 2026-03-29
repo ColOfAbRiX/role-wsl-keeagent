@@ -1,14 +1,15 @@
 ---
-# handlers file for wsl-keeagent
+- name: "Reload systemd user"
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_real_user_id }}"
 
-- name: "Reload systemd"
-  ansible.builtin.command: systemctl daemon-reload
-  listen: "Reload systemd"
-  tags: wsl-keeagent
-
-- name: "Restart wsl-keeagent"
-  ansible.builtin.service:
-    name: "{{ wsl_keeagent_service_name }}"
+- name: "Restart wsl-ssh-agent"
+  ansible.builtin.systemd:
+    name: "wsl-ssh-agent"
+    scope: user
     state: restarted
-  listen: "Restart wsl-keeagent"
-  tags: wsl-keeagent
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_real_user_id }}"

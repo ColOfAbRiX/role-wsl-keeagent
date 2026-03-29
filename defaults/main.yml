@@ -1,18 +1,17 @@
 ---
-# defaults file for wsl-keeagent
+wsl_keeagent_github_repo: "rupor-github/wsl-ssh-agent"
+wsl_keeagent_version: "latest"
 
-# Enable or disable the KeeAgent integration
-wsl_keeagent_enabled: false
+# The Linux path where the Windows .exe will be stored
+wsl_keeagent_bin_path: "/usr/local/bin/wsl-ssh-agent.exe"
 
-# Version of wsl-ssh-agent to install
-# Leave empty to use the latest version from GitHub
-wsl_keeagent_version: ""
+# The Linux socket that WSL apps will talk to
+wsl_keeagent_socket: "{{ ansible_env.HOME }}/.wsl-ssh-agent.sock"
 
-# Path where the wsl-ssh-agent binary will be installed
-wsl_keeagent_bin_path: /usr/local/bin/wsl-ssh-agent
 
-# Socket path for SSH_AUTH_SOCK
-wsl_keeagent_socket: /tmp/wsl-ssh-agent.sock
-
-# wsl-ssh-agent GitHub repository
-wsl_keeagent_github_repo: rupor-github/wsl-ssh-agent
+# WSL1 Variables
+wsl_keeagent_service:          wsl-keeagent
+wsl_keeagent_msysgit_socket:   ''
+wsl_keeagent_ssh_agent_socket: /tmp/.ssh-auth-sock
+wsl_keeagent_script_path:      /usr/local/bin
+wsl_keeagent_script_name:      msysgit2unix-socket.py
