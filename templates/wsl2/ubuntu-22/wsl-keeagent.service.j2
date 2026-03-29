@@ -1,0 +1,12 @@
+[Unit]
+Description=WSL2 to Windows KeeAgent Bridge
+After=network.target
+
+[Service]
+ExecStartPre=/usr/bin/rm -f {{ wsl_keeagent_ssh_agent_socket }}
+ExecStart={{ wsl_keeagent_exec_path }}/{{ wsl_keeagent_exec_name }} -socket {{ wsl_keeagent_ssh_agent_socket }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,17 +1,14 @@
 ---
-wsl_keeagent_github_repo: "rupor-github/wsl-ssh-agent"
-wsl_keeagent_version: "latest"
 
-# The Linux path where the Windows .exe will be stored
-wsl_keeagent_bin_path: "/usr/local/bin/wsl-ssh-agent.exe"
-
-# The Linux socket that WSL apps will talk to
-wsl_keeagent_socket: "{{ ansible_env.HOME }}/.wsl-ssh-agent.sock"
-
+wsl_keeagent_ssh_agent_socket: "/tmp/wsl-ssh-agent.sock"
 
 # WSL1 Variables
-wsl_keeagent_service:          wsl-keeagent
-wsl_keeagent_msysgit_socket:   ''
-wsl_keeagent_ssh_agent_socket: /tmp/.ssh-auth-sock
-wsl_keeagent_script_path:      /usr/local/bin
-wsl_keeagent_script_name:      msysgit2unix-socket.py
+wsl_keeagent_service: wsl-keeagent
+wsl_keeagent_msysgit_socket: ""
+wsl_keeagent_script_path: /usr/local/bin
+wsl_keeagent_script_name: msysgit2unix-socket.py
+
+# WSL2 Variables
+wsl_keeagent_agent_version: "1.6.9"
+wsl_keeagent_exec_path: /usr/local/bin
+wsl_keeagent_exec_name: wsl-ssh-agent-gui.exe

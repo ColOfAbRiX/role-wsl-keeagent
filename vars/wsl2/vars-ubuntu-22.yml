@@ -1,7 +1,5 @@
 ---
 # vars file for wsl-keeagent
 
-wsl_keeagent_dependencies:
- - unzip
- - curl
- - python3-jmespath
+wsl_keeagent_packages:
+  - unzip

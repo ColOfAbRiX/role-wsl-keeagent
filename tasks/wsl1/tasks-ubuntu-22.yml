@@ -47,7 +47,6 @@
   when: not wsl_keeagent_enabled | default(true) | bool
   tags: wsl-keeagent
 
-# Fixing a problem with wsl-keeagent service startup
 - block:
 
    - name: "Stop wsl-keeagent service"
