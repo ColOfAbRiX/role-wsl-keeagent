@@ -1,12 +1,13 @@
 [Unit]
-Description=WSL2 to Windows KeeAgent Bridge
+Description=WSL2 to Windows OpenSSH/KeeAgent bridge
 After=network.target
 
 [Service]
+Type=simple
 ExecStartPre=/usr/bin/rm -f {{ wsl_keeagent_ssh_agent_socket }}
-ExecStart={{ wsl_keeagent_exec_path }}/{{ wsl_keeagent_exec_name }} -socket {{ wsl_keeagent_ssh_agent_socket }}
+ExecStart=/usr/bin/socat UNIX-LISTEN:{{ wsl_keeagent_ssh_agent_socket }},fork,mode=0777 EXEC:'{{ wsl_keeagent_exec_path }}/{{ wsl_keeagent_exec_name }} -ei -s {{ wsl_keeagent_win_pipe }}',nofork
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

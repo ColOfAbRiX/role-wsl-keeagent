@@ -3,3 +3,4 @@
 
 wsl_keeagent_packages:
   - unzip
+  - socat

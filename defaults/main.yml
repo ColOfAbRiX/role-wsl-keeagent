@@ -11,4 +11,5 @@ wsl_keeagent_script_name: msysgit2unix-socket.py
 # WSL2 Variables
 wsl_keeagent_agent_version: "1.6.9"
 wsl_keeagent_exec_path: /usr/local/bin
-wsl_keeagent_exec_name: wsl-ssh-agent-gui.exe
+wsl_keeagent_exec_name: npiperelay.exe
+wsl_keeagent_win_pipe: //./pipe/openssh-ssh-agent
