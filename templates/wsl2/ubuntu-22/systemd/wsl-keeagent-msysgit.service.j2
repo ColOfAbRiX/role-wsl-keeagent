@@ -1,0 +1,19 @@
+[Unit]
+Description=WSL2 to Windows KeeAgent msysgit socket bridge
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=/usr/bin/rm -f {{ wsl_keeagent_ssh_agent_socket }}
+ExecStart=/usr/bin/python3 \
+    {{ wsl_keeagent_script_path }}/{{ wsl_keeagent_script_name }} \
+        --verbose \
+        --no-daemon \
+        --timeout 15 \
+        --pidfile /var/run/wsl-keeagent-msysgit.pid \
+        "{{ wsl_keeagent_msysgit_socket }}:{{ wsl_keeagent_ssh_agent_socket }}"
+
+[Install]
+WantedBy=multi-user.target

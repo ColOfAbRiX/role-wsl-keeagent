@@ -14,23 +14,21 @@ Command line usage: msysgit2unix-socket.py [-h] [--downstream-buffer-size N]
                                            [--upstream-buffer-size N] [--listen-backlog N]
                                            [--timeout N] [--pidfile FILE]
                                            source:destination [source:destination ...]
-Positional arguments:
-  source:destination    A pair of a source msysGit and a destination Unix
-                        sockets.
-Optional arguments:
+positional arguments:
+  source:destination    A pair of a source msysGit and a destination Unix sockets.
+
+options:
   -h, --help            show this help message and exit
+  -v, --verbose         Enable verbose output for debugging.
+  --no-daemon           Run in foreground without daemonizing.
   --downstream-buffer-size N
-                        Maximum number of bytes to read at a time from the
-                        Unix socket.
+                        Maximum number of bytes to read at a time from the Unix socket.
   --upstream-buffer-size N
-                        Maximum number of bytes to read at a time from the
-                        msysGit socket.
-  --listen-backlog N    Maximum number of simultaneous connections to the Unix
-                        socket.
-  --mode mode           File system permissions of the socket.
+                        Maximum number of bytes to read at a time from the msysGit socket.
+  --listen-backlog N    Maximum number of simultaneous connections to the Unix socket.
+  --mode MODE           File system permissions of the socket.
   --timeout N           Timeout.
   --pidfile FILE        Where to write the PID file.
-
 See: https://gist.github.com/duebbert/4298b5f4eb7cc064b09e9d865dd490c9
 """
 
@@ -43,6 +41,16 @@ import re
 import signal
 import socket
 import sys
+
+# Global verbose flag
+VERBOSE = False
+
+def log(msg):
+    """Print debug message if verbose mode is enabled."""
+    if VERBOSE:
+        print(f"[msysgit2unix-socket] {msg}", file=sys.stderr)
+        sys.stderr.flush()
+
 
 # NOTE: Taken from http://stackoverflow.com/a/6940314
 def PidExists(pid):
@@ -73,6 +81,7 @@ def PidExists(pid):
     else:
         return True
 
+
 class UpstreamHandler(asyncore.dispatcher_with_send):
     """
     This class handles the connection to the TCP socket listening on localhost that makes the msysGit socket.
@@ -82,24 +91,35 @@ class UpstreamHandler(asyncore.dispatcher_with_send):
         self.out_buffer = b''
         self.downstream_dispatcher = downstream_dispatcher
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.connect(('localhost', UpstreamHandler.load_tcp_port_from_msysgit_socket_file(upstream_path)))
+        port = UpstreamHandler.load_tcp_port_from_msysgit_socket_file(upstream_path)
+        log(f"Connecting to TCP port {port}")
+        self.connect(('localhost', port))
 
     @staticmethod
     def load_tcp_port_from_msysgit_socket_file(path):
+        log(f"Reading msysgit socket file: {path}")
         with open(path, 'r') as f:
-            m = re.search('>([0-9]+)', f.readline())
-            return int(m.group(1))
+            content = f.read()
+            log(f"Socket file content: {content}")
+            m = re.search(r'>(\d+)', content)
+            if m:
+                port = int(m.group(1))
+                log(f"Extracted port: {port}")
+                return port
+            raise ValueError(f"Could not extract port from socket file: {content}")
 
     def handle_connect(self):
-        pass
+        log("TCP connection established")
 
     def handle_close(self):
+        log("TCP connection closed")
         self.close()
         self.downstream_dispatcher.close()
 
     def handle_read(self):
         data = self.recv(config.upstream_buffer_size)
         if data:
+            log(f"Received {len(data)} bytes from TCP")
             self.downstream_dispatcher.send(data)
 
 
@@ -110,15 +130,18 @@ class DownstreamHandler(asyncore.dispatcher_with_send):
     def __init__(self, downstream_socket, upstream_path):
         asyncore.dispatcher.__init__(self, downstream_socket)
         self.out_buffer = b''
+        log("Creating upstream handler")
         self.upstream_dispatcher = UpstreamHandler(self, upstream_path)
 
     def handle_close(self):
+        log("Unix socket connection closed")
         self.close()
         self.upstream_dispatcher.close()
 
     def handle_read(self):
         data = self.recv(config.downstream_buffer_size)
         if data:
+            log(f"Received {len(data)} bytes from Unix socket")
             self.upstream_dispatcher.send(data)
 
 
@@ -129,17 +152,21 @@ class MSysGit2UnixSocketServer(asyncore.dispatcher):
     def __init__(self, upstream_socket_path, unix_socket_path, mode):
         asyncore.dispatcher.__init__(self)
         self.upstream_socket_path = upstream_socket_path
+        log(f"Creating Unix socket server at {unix_socket_path}")
         self.create_socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.bind(unix_socket_path)
         self.listen(config.listen_backlog)
         self.mode = mode
         os.chmod(unix_socket_path, mode)
+        log(f"Unix socket server listening at {unix_socket_path}")
 
     def handle_accept(self):
         pair = self.accept()
         if pair is not None:
             sock, addr = pair
+            log("New connection accepted")
             DownstreamHandler(sock, self.upstream_socket_path)
+
 
 def build_config():
     class ProxyAction(argparse.Action):
@@ -154,6 +181,14 @@ def build_config():
 
     parser = argparse.ArgumentParser(
         description='Transforms msysGit compatible sockets to Unix sockets for the Windows Linux Subsystem.')
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Enable verbose output for debugging.')
+    parser.add_argument(
+        '--no-daemon',
+        action='store_true',
+        help='Run in foreground without daemonizing.')
     parser.add_argument(
         '--downstream-buffer-size',
         default=8192,
@@ -185,7 +220,7 @@ def build_config():
         metavar='N')
     parser.add_argument(
         '--pidfile',
-        default='/tmp/msysgit2unix-socket.pid',
+        default='/var/run/wsl-keeagent-msysgit.pid',
         metavar='FILE',
         help='Where to write the PID file.')
     parser.add_argument(
@@ -231,6 +266,8 @@ def daemonize():
     pid = str(os.getpid())
     with open(config.pidfile, 'w+') as f:
         f.write('%s\n' % pid)
+    log(f"Daemonized with PID {pid}")
+
 
 def cleanup():
     try:
@@ -242,27 +279,48 @@ def cleanup():
     except Exception as e:
         sys.stderr.write('%s' % (e))
 
+
 if __name__ == '__main__':
     config = build_config()
+
+    VERBOSE = config.verbose
+
+    log("Starting msysgit2unix-socket.py")
 
     if os.path.exists(config.pidfile):
         # Check if process is really running, if not run cleanup
         f = open(config.pidfile, 'r')
-        if PidExists(int(f.readline().strip())):
+        pid = int(f.readline().strip())
+        if PidExists(pid):
+            log(f"Process already running with PID {pid}")
             sys.stderr.write('%s: Already running (or at least pidfile "%s" already exists).\n' % (sys.argv[0], config.pidfile))
             sys.exit(0)
         else:
+            log(f"Stale PID file, cleaning up")
             cleanup()
 
     mode = int(config.mode, base=8)
     for pair in config.proxies:
+        log(f"Creating server for {pair[0]} -> {pair[1]}")
         MSysGit2UnixSocketServer(pair[0], pair[1], mode)
 
-    daemonize()
+    # Only daemonize if --no-daemon is not specified
+    if not config.no_daemon:
+        log("Daemonizing process...")
+        daemonize()
+    else:
+        log("Running in foreground (no daemon)")
+        # Write PID file for systemd tracking
+        pid = str(os.getpid())
+        with open(config.pidfile, 'w+') as f:
+            f.write('%s\n' % pid)
+        log(f"Written PID {pid} to {config.pidfile}")
 
     # Redundant cleanup :)
     atexit.register(cleanup)
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
+    log("Starting asyncore loop")
     asyncore.loop(config.timeout, True)
+    log("asyncore loop ended")
