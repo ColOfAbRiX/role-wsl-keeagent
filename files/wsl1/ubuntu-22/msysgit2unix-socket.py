@@ -1,39 +1,7 @@
 #!/usr/bin/env python3
 
-"""
-msysGit to Unix socket proxy
-============================
-This small script is intended to help use msysGit sockets with the new Windows Linux Subsystem (aka Bash for Windows).
-It was specifically designed to pass SSH keys from the KeeAgent module of KeePass secret management application to the
-ssh utility running in the WSL (it only works with Linux sockets). However, my guess is that it will have uses for other
-applications as well.
-In order to efficiently use it, I add it at the end of the ~/.bashrc file, like this:
-    export SSH_AUTH_SOCK="/tmp/.ssh-auth-sock"
-    ~/bin/msysgit2unix-socket.py /mnt/c/Users/User/keeagent.sock:$SSH_AUTH_SOCK
-Command line usage: msysgit2unix-socket.py [-h] [--downstream-buffer-size N]
-                                           [--upstream-buffer-size N] [--listen-backlog N]
-                                           [--timeout N] [--pidfile FILE]
-                                           source:destination [source:destination ...]
-positional arguments:
-  source:destination    A pair of a source msysGit and a destination Unix sockets.
-
-options:
-  -h, --help            show this help message and exit
-  -v, --verbose         Enable verbose output for debugging.
-  --no-daemon           Run in foreground without daemonizing.
-  --downstream-buffer-size N
-                        Maximum number of bytes to read at a time from the Unix socket.
-  --upstream-buffer-size N
-                        Maximum number of bytes to read at a time from the msysGit socket.
-  --listen-backlog N    Maximum number of simultaneous connections to the Unix socket.
-  --mode MODE           File system permissions of the socket.
-  --timeout N           Timeout.
-  --pidfile FILE        Where to write the PID file.
-See: https://gist.github.com/duebbert/4298b5f4eb7cc064b09e9d865dd490c9
-"""
-
 import argparse
-import asyncore
+import asyncio
 import atexit
 import errno
 import os
@@ -51,276 +19,240 @@ def log(msg):
         print(f"[msysgit2unix-socket] {msg}", file=sys.stderr)
         sys.stderr.flush()
 
-
-# NOTE: Taken from http://stackoverflow.com/a/6940314
-def PidExists(pid):
-    """Check whether pid exists in the current process table.
-    UNIX only.
-    """
-    if pid < 0:
+def pid_exists(pid):
+    """Check whether pid exists in the current process table."""
+    if pid <= 0:
         return False
-    if pid == 0:
-        # According to "man 2 kill" PID 0 refers to every process
-        # in the process group of the calling process.
-        # On certain systems 0 is a valid PID but we have no way
-        # to know that in a portable fashion.
-        raise ValueError('invalid PID 0')
     try:
         os.kill(pid, 0)
     except OSError as err:
-        if err.errno == errno.ESRCH:
-            # ESRCH == No such process
-            return False
-        elif err.errno == errno.EPERM:
-            # EPERM clearly means there's a process to deny access to
-            return True
-        else:
-            # According to "man 2 kill" possible error values are
-            # (EINVAL, EPERM, ESRCH)
-            raise
-    else:
-        return True
+        return err.errno != errno.ESRCH
+    return True
 
-
-class UpstreamHandler(asyncore.dispatcher_with_send):
-    """
-    This class handles the connection to the TCP socket listening on localhost that makes the msysGit socket.
-    """
-    def __init__(self, downstream_dispatcher, upstream_path):
-        asyncore.dispatcher.__init__(self)
-        self.out_buffer = b''
-        self.downstream_dispatcher = downstream_dispatcher
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        port = UpstreamHandler.load_tcp_port_from_msysgit_socket_file(upstream_path)
-        log(f"Connecting to TCP port {port}")
-        self.connect(('localhost', port))
-
-    @staticmethod
-    def load_tcp_port_from_msysgit_socket_file(path):
-        log(f"Reading msysgit socket file: {path}")
+def load_tcp_port(path):
+    """Extracts the TCP port from the msysGit socket file."""
+    log(f"Reading msysgit socket file: {path}")
+    try:
         with open(path, 'r') as f:
             content = f.read()
-            log(f"Socket file content: {content}")
             m = re.search(r'>(\d+)', content)
             if m:
                 port = int(m.group(1))
                 log(f"Extracted port: {port}")
                 return port
-            raise ValueError(f"Could not extract port from socket file: {content}")
+            raise ValueError(f"Could not extract port from: {content}")
+    except Exception as e:
+        log(f"Error reading socket file: {e}")
+        raise
 
-    def handle_connect(self):
+def get_target_ip(ip_file_path):
+    """Reads the IP from the specified file, defaults to 127.0.0.1 if none."""
+    if not ip_file_path:
+        return '127.0.0.1'
+    try:
+        with open(ip_file_path, 'r') as f:
+            ip = f.read().strip()
+            if ip:
+                log(f"Using IP from file {ip_file_path}: {ip}")
+                return ip
+    except Exception as e:
+        log(f"Warning: Could not read IP file {ip_file_path} ({e}). Falling back to 127.0.0.1")
+    return '127.0.0.1'
+
+async def proxy_data(reader, writer, buffer_size, label):
+    """Generic pipe to move data from reader to writer."""
+    try:
+        while True:
+            data = await reader.read(buffer_size)
+            if not data:
+                break
+            writer.write(data)
+            await writer.drain()
+    except Exception as e:
+        log(f"Proxy error ({label}): {e}")
+    finally:
+        if not writer.is_closing():
+            writer.close()
+
+async def handle_unix_client(unix_reader, unix_writer, upstream_path, config):
+    """Handles new Unix socket connection and bridges to the dynamic IP."""
+    log("New connection accepted on Unix socket")
+    try:
+        port = load_tcp_port(upstream_path)
+        target_ip = get_target_ip(config.ip_file)
+
+        log(f"Connecting to {target_ip}:{port} (timeout: {config.timeout}s)")
+
+        # Restore timeout logic using asyncio.wait_for
+        tcp_reader, tcp_writer = await asyncio.wait_for(
+            asyncio.open_connection(target_ip, port),
+            timeout=config.timeout
+        )
         log("TCP connection established")
 
-    def handle_close(self):
-        log("TCP connection closed")
-        self.close()
-        self.downstream_dispatcher.close()
+        await asyncio.gather(
+            proxy_data(unix_reader, tcp_writer, config.downstream_buffer_size, "Unix -> TCP"),
+            proxy_data(tcp_reader, unix_writer, config.upstream_buffer_size, "TCP -> Unix")
+        )
+    except asyncio.TimeoutError:
+        log(f"Connection to {target_ip}:{port} timed out after {config.timeout}s")
+    except Exception as e:
+        log(f"Failed to establish upstream bridge: {e}")
+    finally:
+        unix_writer.close()
+        try:
+            await unix_writer.wait_closed()
+        except: pass
+        log("Connection closed")
 
-    def handle_read(self):
-        data = self.recv(config.upstream_buffer_size)
-        if data:
-            log(f"Received {len(data)} bytes from TCP")
-            self.downstream_dispatcher.send(data)
+class MSysGitProxyServer:
+    def __init__(self, upstream_path, unix_path, mode, config):
+        self.upstream_path = upstream_path
+        self.unix_path = unix_path
+        self.mode = int(mode, 8)
+        self.config = config
 
+    async def start(self):
+        if os.path.exists(self.unix_path):
+            os.remove(self.unix_path)
 
-class DownstreamHandler(asyncore.dispatcher_with_send):
-    """
-    This class handles the connections that are being accepted on the Unix socket.
-    """
-    def __init__(self, downstream_socket, upstream_path):
-        asyncore.dispatcher.__init__(self, downstream_socket)
-        self.out_buffer = b''
-        log("Creating upstream handler")
-        self.upstream_dispatcher = UpstreamHandler(self, upstream_path)
+        server = await asyncio.start_unix_server(
+            lambda r, w: handle_unix_client(r, w, self.upstream_path, self.config),
+            path=self.unix_path,
+            backlog=self.config.listen_backlog
+        )
 
-    def handle_close(self):
-        log("Unix socket connection closed")
-        self.close()
-        self.upstream_dispatcher.close()
+        os.chmod(self.unix_path, self.mode)
+        log(f"Listening on {self.unix_path}")
 
-    def handle_read(self):
-        data = self.recv(config.downstream_buffer_size)
-        if data:
-            log(f"Received {len(data)} bytes from Unix socket")
-            self.upstream_dispatcher.send(data)
-
-
-class MSysGit2UnixSocketServer(asyncore.dispatcher):
-    """
-    This is the "server" listening for connections on the Unix socket.
-    """
-    def __init__(self, upstream_socket_path, unix_socket_path, mode):
-        asyncore.dispatcher.__init__(self)
-        self.upstream_socket_path = upstream_socket_path
-        log(f"Creating Unix socket server at {unix_socket_path}")
-        self.create_socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.bind(unix_socket_path)
-        self.listen(config.listen_backlog)
-        self.mode = mode
-        os.chmod(unix_socket_path, mode)
-        log(f"Unix socket server listening at {unix_socket_path}")
-
-    def handle_accept(self):
-        pair = self.accept()
-        if pair is not None:
-            sock, addr = pair
-            log("New connection accepted")
-            DownstreamHandler(sock, self.upstream_socket_path)
-
+        async with server:
+            await server.serve_forever()
 
 def build_config():
     class ProxyAction(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
             proxies = []
             for value in values:
-                src_dst = value.partition(':')
-                if src_dst[1] == '':
-                    raise parser.error('Unable to parse sockets proxy pair "%s".' % value)
-                proxies.append([src_dst[0], src_dst[2]])
+                src, sep, dst = value.partition(':')
+                if not sep:
+                    raise parser.error(f'Invalid proxy pair "{value}". Use source:destination')
+                proxies.append((src, dst))
             setattr(namespace, self.dest, proxies)
 
-    parser = argparse.ArgumentParser(
-        description='Transforms msysGit compatible sockets to Unix sockets for the Windows Linux Subsystem.')
+    parser = argparse.ArgumentParser(description='msysGit to Unix socket proxy (Asyncio Edition)')
     parser.add_argument(
-        '-v', '--verbose',
+        '-v',
+        '--verbose',
         action='store_true',
-        help='Enable verbose output for debugging.')
+        help='Enable verbose output.'
+    )
     parser.add_argument(
         '--no-daemon',
         action='store_true',
-        help='Run in foreground without daemonizing.')
+        help='Run in foreground.'
+    )
+    parser.add_argument(
+        '--ip-file',
+        help='Path to file containing target IP (e.g. host-address.txt).'
+    )
     parser.add_argument(
         '--downstream-buffer-size',
         default=8192,
-        type=int,
-        metavar='N',
-        help='Maximum number of bytes to read at a time from the Unix socket.')
+        type=int
+    )
     parser.add_argument(
         '--upstream-buffer-size',
         default=8192,
-        type=int,
-        metavar='N',
-        help='Maximum number of bytes to read at a time from the msysGit socket.')
+        type=int
+    )
     parser.add_argument(
         '--listen-backlog',
         default=100,
-        type=int,
-        metavar='N',
-        help='Maximum number of simultaneous connections to the Unix socket.')
+        type=int
+    )
     parser.add_argument(
         '--mode',
-        default='0777',
-        help='File system permissions of the socket.'
+        default='0777'
+    )
+    parser.add_argument(
+        '--pidfile',
+        default='/var/run/wsl-keeagent-msysgit.pid',
+        help='Where to write the PID file.'
     )
     parser.add_argument(
         '--timeout',
         default=60,
         type=int,
-        help='Timeout.',
-        metavar='N')
-    parser.add_argument(
-        '--pidfile',
-        default='/var/run/wsl-keeagent-msysgit.pid',
-        metavar='FILE',
-        help='Where to write the PID file.')
+        help='Connection timeout in seconds.'
+    )
     parser.add_argument(
         'proxies',
         nargs='+',
         action=ProxyAction,
-        metavar='source:destination',
-        help='A pair of a source msysGit and a destination Unix sockets.')
+        help='source:destination pairs'
+    )
     return parser.parse_args()
 
-
-def daemonize():
+def daemonize(pidfile):
     try:
-        pid = os.fork()
-        if pid > 0:
-            sys.exit()
-    except OSError:
-        sys.stderr.write('Fork #1 failed.')
-        sys.exit(1)
-
-    os.chdir('/')
+        if os.fork() > 0: sys.exit(0)
+    except OSError: sys.exit(1)
     os.setsid()
     os.umask(0)
-
     try:
-        pid = os.fork()
-        if pid > 0:
-            sys.exit()
-    except OSError:
-        sys.stderr.write('Fork #2 failed.')
-        sys.exit(1)
-
+        if os.fork() > 0: sys.exit(0)
+    except OSError: sys.exit(1)
     sys.stdout.flush()
     sys.stderr.flush()
+    with open(os.devnull, 'r') as si, open(os.devnull, 'a+') as so, open(os.devnull, 'a+') as se:
+        os.dup2(si.fileno(), sys.stdin.fileno())
+        os.dup2(so.fileno(), sys.stdout.fileno())
+        os.dup2(se.fileno(), sys.stderr.fileno())
+    with open(pidfile, 'w') as f:
+        f.write(f"{os.getpid()}\n")
 
-    si = open('/dev/null', 'r')
-    so = open('/dev/null', 'a+')
-    se = open('/dev/null', 'a+')
-    os.dup2(si.fileno(), sys.stdin.fileno())
-    os.dup2(so.fileno(), sys.stdout.fileno())
-    os.dup2(se.fileno(), sys.stderr.fileno())
+def cleanup(config):
+    log("Cleaning up...")
+    for _, unix_path in config.proxies:
+        if os.path.exists(unix_path):
+            os.remove(unix_path)
+    if os.path.exists(config.pidfile):
+        os.remove(config.pidfile)
 
-    pid = str(os.getpid())
-    with open(config.pidfile, 'w+') as f:
-        f.write('%s\n' % pid)
-    log(f"Daemonized with PID {pid}")
-
-
-def cleanup():
-    try:
-        for pair in config.proxies:
-            if os.path.exists(pair[1]):
-                os.remove(pair[1])
-        if os.path.exists(config.pidfile):
-            os.remove(config.pidfile)
-    except Exception as e:
-        sys.stderr.write('%s' % (e))
-
+async def main_loop(config):
+    tasks = []
+    for upstream, unix in config.proxies:
+        server = MSysGitProxyServer(upstream, unix, config.mode, config)
+        tasks.append(server.start())
+    await asyncio.gather(*tasks)
 
 if __name__ == '__main__':
     config = build_config()
-
     VERBOSE = config.verbose
 
-    log("Starting msysgit2unix-socket.py")
-
     if os.path.exists(config.pidfile):
-        # Check if process is really running, if not run cleanup
-        f = open(config.pidfile, 'r')
-        pid = int(f.readline().strip())
-        if PidExists(pid):
-            log(f"Process already running with PID {pid}")
-            sys.stderr.write('%s: Already running (or at least pidfile "%s" already exists).\n' % (sys.argv[0], config.pidfile))
-            sys.exit(0)
-        else:
-            log(f"Stale PID file, cleaning up")
-            cleanup()
+        with open(config.pidfile, 'r') as f:
+            try:
+                content = f.read().strip()
+                if content:
+                    pid = int(content)
+                    if pid_exists(pid):
+                        print(f"Already running with PID {pid}", file=sys.stderr)
+                        sys.exit(0)
+            except (ValueError, OSError): pass
+        cleanup(config)
 
-    mode = int(config.mode, base=8)
-    for pair in config.proxies:
-        log(f"Creating server for {pair[0]} -> {pair[1]}")
-        MSysGit2UnixSocketServer(pair[0], pair[1], mode)
-
-    # Only daemonize if --no-daemon is not specified
     if not config.no_daemon:
-        log("Daemonizing process...")
-        daemonize()
+        daemonize(config.pidfile)
     else:
-        log("Running in foreground (no daemon)")
-        # Write PID file for systemd tracking
-        pid = str(os.getpid())
-        with open(config.pidfile, 'w+') as f:
-            f.write('%s\n' % pid)
-        log(f"Written PID {pid} to {config.pidfile}")
+        with open(config.pidfile, 'w') as f:
+            f.write(f"{os.getpid()}\n")
 
-    # Redundant cleanup :)
-    atexit.register(cleanup)
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
+    atexit.register(cleanup, config)
+    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+    signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
 
-    log("Starting asyncore loop")
-    asyncore.loop(config.timeout, True)
-    log("asyncore loop ended")
+    try:
+        asyncio.run(main_loop(config))
+    except KeyboardInterrupt:
+        pass

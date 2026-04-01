@@ -1,8 +1,16 @@
 ---
 
-wsl_keeagent_ssh_agent_socket: "/tmp/wsl-ssh-agent.sock"
+# WSL2 Only - Socket type: "npiperelay" (default) or "msysgit"
+# - npiperelay: Uses npiperelay.exe to connect to Windows named pipe (works but no unlock prompt)
+# - msysgit: Uses TCP socket connection (preserves unlock prompt like WSL1)
+# FIXME: Remove the msysgit and this variable
+wsl_keeagent_socket_type: "npiperelay"
+
+wsl_keeagent_ssh_agent_socket: "/var/run/wsl-ssh-agent.sock"
+wsl_keeagent_host_address_file: "/run/host-address.fifo"
 
 # WSL1 Variables
+
 wsl_keeagent_service: wsl-keeagent
 wsl_keeagent_msysgit_socket: ""
 wsl_keeagent_script_path: /usr/local/bin
@@ -10,12 +18,7 @@ wsl_keeagent_script_name: msysgit2unix-socket.py
 
 # WSL2 Variables
 
-# Socket type: "npiperelay" (default) or "msysgit"
-# - npiperelay: Uses npiperelay.exe to connect to Windows named pipe (works but no unlock prompt)
-# - msysgit: Uses TCP socket connection (preserves unlock prompt like WSL1)
-wsl_keeagent_socket_type: "npiperelay"
-
+wsl_keeagent_win_pipe: //./pipe/openssh-ssh-agent
 wsl_keeagent_agent_version: "1.6.9"
 wsl_keeagent_exec_path: /usr/local/bin
 wsl_keeagent_exec_name: npiperelay.exe
-wsl_keeagent_win_pipe: //./pipe/openssh-ssh-agent

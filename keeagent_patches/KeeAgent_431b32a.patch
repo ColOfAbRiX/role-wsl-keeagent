@@ -1,0 +1,427 @@
+diff --git a/KeeAgent/KeeAgent.csproj b/KeeAgent/KeeAgent.csproj
+index f9a4cb8..6c06aa2 100644
+--- a/KeeAgent/KeeAgent.csproj
++++ b/KeeAgent/KeeAgent.csproj
+@@ -285,7 +285,7 @@
+   </ItemGroup>
+   <ItemGroup Condition=" '$(OS)' == 'Unix' ">
+     <Reference Include="KeePass">
+-      <HintPath>/usr/lib/keepass2/KeePass.exe</HintPath>
++      <HintPath>/mnt/c/Program Files/KeePass Password Safe 2/KeePass.exe</HintPath>
+       <ExcludeFromPlgx />
+     </Reference>
+     <Reference Include="BouncyCastle">
+@@ -336,4 +336,4 @@
+       </Properties>
+     </MonoDevelop>
+   </ProjectExtensions>
+-</Project>
+\ No newline at end of file
++</Project>
+diff --git a/KeeAgent/KeeAgentExt.cs b/KeeAgent/KeeAgentExt.cs
+index 0e64ea6..b88d500 100644
+--- a/KeeAgent/KeeAgentExt.cs
++++ b/KeeAgent/KeeAgentExt.cs
+@@ -9,6 +9,8 @@ using System.Drawing;
+ using System.IO;
+ using System.Linq;
+ using System.Reflection;
++using System.Net;
++using System.Net.NetworkInformation;
+ using System.Net.Sockets;
+ using System.Threading.Tasks;
+ using System.Windows.Forms;
+@@ -64,6 +66,8 @@ namespace KeeAgent
+       pluginNamespace + ".UserPicksKeyOnRequestIdentities";
+     const string ignoreMissingExternalKeyFilesName = pluginNamespace + ".IgnoreMissingExternalKeyFilesName";
+     const string disableKeyDecryptionProgressBarName = pluginNamespace + ".DisableKeyDecryptionProgressBar";
++    const string socketBindTypeName = pluginNamespace + ".SocketBindType";
++    const string socketBindValueName = pluginNamespace + ".SocketBindValue";
+     const string keyFilePathSprPlaceholder = @"{KEEAGENT:KEYFILEPATH}";
+     const string identFileOptSprPlaceholder = @"{KEEAGENT:IDENTFILEOPT}";
+     const string groupMenuItemName = "KeeAgentGroupMenuItem";
+@@ -352,6 +356,48 @@ namespace KeeAgent
+       UpdateGroupMenuItem(menuItem);
+     }
+ 
++    /// <summary>
++    /// Resolves the configured socket bind address from Options.
++    /// Returns null for default (loopback), or the resolved IPAddress.
++    /// </summary>
++    private IPAddress ResolveSocketBindAddress()
++    {
++        var bindType = Options.SocketBindType;
++        var bindValue = Options.SocketBindValue;
++        if (string.IsNullOrEmpty(bindType) || string.IsNullOrEmpty(bindValue))
++            return null; // default: loopback
++
++        if (bindType == "IpAddress")
++        {
++            IPAddress addr;
++            if (IPAddress.TryParse(bindValue, out addr))
++                return addr;
++
++            MessageService.ShowWarning("KeeAgent: Invalid socket bind IP address:", bindValue);
++            return null;
++        }
++
++        if (bindType == "NetworkInterface")
++        {
++            foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
++            {
++                if (iface.Name == bindValue)
++                {
++                    foreach (var unicast in iface.GetIPProperties().UnicastAddresses)
++                    {
++                        if (unicast.Address.AddressFamily == AddressFamily.InterNetwork)
++                            return unicast.Address;
++                    }
++                    MessageService.ShowWarning("KeeAgent: No IPv4 address found on network interface:", bindValue);
++                    return null;
++                }
++            }
++            MessageService.ShowWarning("KeeAgent: Network interface not found:", bindValue);
++            return null;
++        }
++        return null;
++    }
++
+     public void StartCygwinSocket()
+     {
+       var pagent = agent as PageantAgent;
+@@ -360,7 +406,7 @@ namespace KeeAgent
+       try {
+         pagent.StopCygwinSocket();
+         pagent.StartCygwinSocket(Environment.ExpandEnvironmentVariables(
+-          Options.CygwinSocketPath));
++            Options.CygwinSocketPath), ResolveSocketBindAddress());
+       }
+       catch (Exception ex) {
+         MessageService.ShowWarning("Failed to start Cygwin socket:",
+@@ -385,7 +431,7 @@ namespace KeeAgent
+       try {
+         pagent.StopMsysSocket();
+         pagent.StartMsysSocket(Environment.ExpandEnvironmentVariables(
+-          Options.MsysSocketPath));
++          Options.MsysSocketPath), ResolveSocketBindAddress());
+       }
+       catch (Exception ex) {
+         MessageService.ShowWarning("Failed to start MSYS socket:",
+@@ -649,6 +695,8 @@ namespace KeeAgent
+         Options.UserPicksKeyOnRequestIdentities);
+       config.SetBool(ignoreMissingExternalKeyFilesName, Options.IgnoreMissingExternalKeyFiles);
+       config.SetBool(disableKeyDecryptionProgressBarName, Options.DisableKeyDecryptionProgressBar);
++      config.SetString(socketBindTypeName, Options.SocketBindType);
++      config.SetString(socketBindValueName, Options.SocketBindValue);
+     }
+ 
+     private void LoadOptions()
+@@ -672,6 +720,8 @@ namespace KeeAgent
+         config.GetBool(userPicksKeyOnRequestIdentitiesOptionName, false);
+       Options.IgnoreMissingExternalKeyFiles = config.GetBool(ignoreMissingExternalKeyFilesName, false);
+       Options.DisableKeyDecryptionProgressBar = config.GetBool(disableKeyDecryptionProgressBarName, false);
++      Options.SocketBindType = config.GetString(socketBindTypeName);
++      Options.SocketBindValue = config.GetString(socketBindValueName);
+ 
+       string defaultLogFileNameValue = Path.Combine(
+           Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+diff --git a/KeeAgent/Options.cs b/KeeAgent/Options.cs
+index 814780d..749bb0d 100644
+--- a/KeeAgent/Options.cs
++++ b/KeeAgent/Options.cs
+@@ -112,5 +112,18 @@ namespace KeeAgent
+     /// When <c>true</c>, we will not display a progress bar during SSH key decryption.
+     /// </summary>
+     public bool DisableKeyDecryptionProgressBar { get; set; }
++
++    /// <summary>
++    /// The type of socket bind address setting: empty/null for default (loopback),
++    /// "IpAddress" to bind to a specific IP, or "NetworkInterface" to bind to an interface.
++    /// Applies to both Cygwin and MSYS sockets.
++    /// </summary>
++    public string SocketBindType { get; set; }
++
++    /// <summary>
++    /// The value for the socket bind address: an IP address string or a network interface name,
++    /// depending on <see cref="SocketBindType"/>.
++    /// </summary>
++    public string SocketBindValue { get; set; }
+   }
+ }
+diff --git a/KeeAgent/UI/OptionsPanel.cs b/KeeAgent/UI/OptionsPanel.cs
+index 536be9e..3e9a15f 100644
+--- a/KeeAgent/UI/OptionsPanel.cs
++++ b/KeeAgent/UI/OptionsPanel.cs
+@@ -17,6 +17,9 @@ namespace KeeAgent.UI
+     KeeAgentExt ext;
+     CheckedLVItemDXList optionsList;
+     bool isUnix;
++    ComboBox socketBindTypeComboBox;
++    Label socketBindValueLabel;
++    TextBox socketBindValueTextBox;
+ 
+     public OptionsPanel(KeeAgentExt ext)
+     {
+@@ -109,6 +112,63 @@ namespace KeeAgent.UI
+         wslSocketPathTextBox.Text = ext.Options.WslSocketPath;
+       }
+       optionsList.UpdateData(false);
++
++      // Socket bind address controls (applies to Cygwin and MSYS sockets)
++      if (!isUnix) {
++        int shrinkWidth = 150;
++        cygwinSocketPathTextBox.Width -= shrinkWidth;
++        msysSocketPathTextBox.Width -= shrinkWidth;
++        wslSocketPathTextBox.Width -= shrinkWidth;
++        cygwinPathBrowseButton.Left -= shrinkWidth;
++        msysPathBrowseButton.Left -= shrinkWidth;
++        wslSocketPathBrowseButton.Left -= shrinkWidth;
++
++        int rightX = cygwinPathBrowseButton.Right + 10;
++        int topY = useCygwinSocketCheckBox.Top;
++
++        var bindLabel = new Label();
++        bindLabel.Text = "Socket bind:";
++        bindLabel.AutoSize = true;
++        bindLabel.Location = new Point(rightX, topY);
++        groupBox1.Controls.Add(bindLabel);
++
++        socketBindTypeComboBox = new ComboBox();
++        socketBindTypeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
++        socketBindTypeComboBox.Items.Add("Default (127.0.0.1)");
++        socketBindTypeComboBox.Items.Add("IP Address");
++        socketBindTypeComboBox.Items.Add("Network Interface");
++        socketBindTypeComboBox.Location = new Point(rightX, bindLabel.Bottom + 4);
++        socketBindTypeComboBox.Width = 130;
++        groupBox1.Controls.Add(socketBindTypeComboBox);
++
++        socketBindValueLabel = new Label();
++        socketBindValueLabel.Text = "Value:";
++        socketBindValueLabel.AutoSize = true;
++        socketBindValueLabel.Location = new Point(rightX, socketBindTypeComboBox.Bottom + 6);
++        groupBox1.Controls.Add(socketBindValueLabel);
++
++        socketBindValueTextBox = new TextBox();
++        socketBindValueTextBox.Location = new Point(rightX + socketBindValueLabel.Width + 4, socketBindValueLabel.Top - 3);
++        socketBindValueTextBox.Width = 90;
++        groupBox1.Controls.Add(socketBindValueTextBox);
++
++        // Load current values
++        var bindType = ext.Options.SocketBindType;
++        if (bindType == "IpAddress") {
++            socketBindTypeComboBox.SelectedIndex = 1;
++            socketBindValueTextBox.Text = ext.Options.SocketBindValue;
++        }
++        else if (bindType == "NetworkInterface") {
++            socketBindTypeComboBox.SelectedIndex = 2;
++            socketBindValueTextBox.Text = ext.Options.SocketBindValue;
++        }
++        else {
++            socketBindTypeComboBox.SelectedIndex = 0;
++            socketBindValueTextBox.Enabled = false;
++        }
++
++        socketBindTypeComboBox.SelectedIndexChanged += new EventHandler(socketBindTypeComboBox_SelectedIndexChanged);
++      }
+     }
+ 
+     protected override void OnLoad(EventArgs e)
+@@ -198,6 +258,25 @@ namespace KeeAgent.UI
+         ext.Options.UseWslSocket = useWslSocketCheckBox.Checked;
+         ext.Options.WslSocketPath = wslSocketPathTextBox.Text;
+       }
++
++      if (socketBindTypeComboBox != null)
++      {
++          switch (socketBindTypeComboBox.SelectedIndex)
++          {
++              case 1:
++                  ext.Options.SocketBindType = "IpAddress";
++                  ext.Options.SocketBindValue = socketBindValueTextBox.Text;
++                  break;
++              case 2:
++                  ext.Options.SocketBindType = "NetworkInterface";
++                  ext.Options.SocketBindValue = socketBindValueTextBox.Text;
++                  break;
++              default:
++                  ext.Options.SocketBindType = "";
++                  ext.Options.SocketBindValue = "";
++                  break;
++          }
++      }
+     }
+ 
+     void helpButton_Click(object sender, EventArgs e)
+@@ -271,5 +350,15 @@ namespace KeeAgent.UI
+         wslSocketPathBrowseButton.Enabled = useWslSocketCheckBox.Checked;
+       }
+     }
++
++    void socketBindTypeComboBox_SelectedIndexChanged(object sender, EventArgs e)
++    {
++        var enabled = socketBindTypeComboBox.SelectedIndex > 0;
++        socketBindValueTextBox.Enabled = enabled;
++        if (!enabled)
++        {
++            socketBindValueTextBox.Text = "";
++        }
++    }
+   }
+ }
+diff --git a/KeeAgent/UI/OptionsPanel.resx b/KeeAgent/UI/OptionsPanel.resx
+index fa5c327..7fa93ca 100644
+--- a/KeeAgent/UI/OptionsPanel.resx
++++ b/KeeAgent/UI/OptionsPanel.resx
+@@ -1,17 +1,17 @@
+ ﻿<?xml version="1.0" encoding="utf-8"?>
+ <root>
+-  <!-- 
+-    Microsoft ResX Schema 
+-    
++  <!--
++    Microsoft ResX Schema
++
+     Version 2.0
+-    
+-    The primary goals of this format is to allow a simple XML format 
+-    that is mostly human readable. The generation and parsing of the 
+-    various data types are done through the TypeConverter classes 
++
++    The primary goals of this format is to allow a simple XML format
++    that is mostly human readable. The generation and parsing of the
++    various data types are done through the TypeConverter classes
+     associated with the data types.
+-    
++
+     Example:
+-    
++
+     ... ado.net/XML headers & schema ...
+     <resheader name="resmimetype">text/microsoft-resx</resheader>
+     <resheader name="version">2.0</resheader>
+@@ -26,36 +26,36 @@
+         <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+         <comment>This is a comment</comment>
+     </data>
+-                
+-    There are any number of "resheader" rows that contain simple 
++
++    There are any number of "resheader" rows that contain simple
+     name/value pairs.
+-    
+-    Each data row contains a name, and value. The row also contains a 
+-    type or mimetype. Type corresponds to a .NET class that support 
+-    text/value conversion through the TypeConverter architecture. 
+-    Classes that don't support this are serialized and stored with the 
++
++    Each data row contains a name, and value. The row also contains a
++    type or mimetype. Type corresponds to a .NET class that support
++    text/value conversion through the TypeConverter architecture.
++    Classes that don't support this are serialized and stored with the
+     mimetype set.
+-    
+-    The mimetype is used for serialized objects, and tells the 
+-    ResXResourceReader how to depersist the object. This is currently not 
++
++    The mimetype is used for serialized objects, and tells the
++    ResXResourceReader how to depersist the object. This is currently not
+     extensible. For a given mimetype the value must be set accordingly:
+-    
+-    Note - application/x-microsoft.net.object.binary.base64 is the format 
+-    that the ResXResourceWriter will generate, however the reader can 
++
++    Note - application/x-microsoft.net.object.binary.base64 is the format
++    that the ResXResourceWriter will generate, however the reader can
+     read any of the formats listed below.
+-    
++
+     mimetype: application/x-microsoft.net.object.binary.base64
+-    value   : The object must be serialized with 
++    value   : The object must be serialized with
+             : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+             : and then encoded with base64 encoding.
+-    
++
+     mimetype: application/x-microsoft.net.object.soap.base64
+-    value   : The object must be serialized with 
++    value   : The object must be serialized with
+             : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+             : and then encoded with base64 encoding.
+ 
+     mimetype: application/x-microsoft.net.object.bytearray.base64
+-    value   : The object must be serialized into a byte array 
++    value   : The object must be serialized into a byte array
+             : using a System.ComponentModel.TypeConverter
+             : and then encoded with base64 encoding.
+     -->
+@@ -610,7 +610,7 @@
+     <value>2</value>
+   </data>
+   <data name="useCygwinSocketCheckBox.Text" xml:space="preserve">
+-    <value>Create Cygwin compatible socket file (works with some versions of MSYS)</value>
++    <value>Create Cygwin compatible socket file</value>
+   </data>
+   <data name="&gt;&gt;useCygwinSocketCheckBox.Name" xml:space="preserve">
+     <value>useCygwinSocketCheckBox</value>
+@@ -714,4 +714,4 @@
+   <data name="&gt;&gt;$this.Type" xml:space="preserve">
+     <value>System.Windows.Forms.UserControl, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+   </data>
+-</root>
+\ No newline at end of file
++</root>
+diff --git a/SshAgentLib b/SshAgentLib
+index 6114528..a62ea5e 160000
+--- a/SshAgentLib
++++ b/SshAgentLib
+@@ -1 +1 @@
+-Subproject commit 6114528e9652457f0064099e6e39769fe6aaa39e
++Subproject commit a62ea5ea0e0243532d95ee257c8c655436c46677
+diff --git a/build-wsl.sh b/build-wsl.sh
+new file mode 100755
+index 0000000..23db3bf
+--- /dev/null
++++ b/build-wsl.sh
+@@ -0,0 +1,42 @@
++#!/bin/bash -x
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++
++sudo apt-get install -y \
++    apt-transport-https \
++    ca-certificates \
++    dirmngr \
++    gnupg \
++    software-properties-common \
++    keepass2
++
++if ! command -v mono &>/dev/null; then
++    sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
++    echo "deb [arch=amd64] https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
++    sudo apt-get update
++    sudo apt-get install -y mono-complete
++fi
++
++NUGET_EXE="${SCRIPT_DIR}/nuget.exe"
++if [ ! -f "$NUGET_EXE" ]; then
++    wget -q -O "$NUGET_EXE" https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
++fi
++
++BC_DLL="/usr/lib/cli/bccrypto-csharp/BouncyCastle.dll"
++if [ ! -f "$BC_DLL" ]; then
++    if apt-cache show libbccrypto-csharp-cil &>/dev/null 2>&1 \
++        && apt-cache show libbccrypto-csharp-cil 2>&1 | grep -q "^Package:"; then
++        sudo apt-get install -y libbccrypto-csharp-cil
++    else
++        NUGET_TMP="/tmp/nuget_pkgs_keeagent"
++        mono "$NUGET_EXE" install Portable.BouncyCastle -Version 1.9.0 -OutputDirectory "$NUGET_TMP"
++
++        sudo mkdir -p /usr/lib/cli/bccrypto-csharp
++        sudo cp "$NUGET_TMP/Portable.BouncyCastle.1.9.0/lib/net40/BouncyCastle.Crypto.dll" "$BC_DLL"
++    fi
++fi
++
++cd "$SCRIPT_DIR"
++msbuild /property:Configuration=Release KeeAgent.sln

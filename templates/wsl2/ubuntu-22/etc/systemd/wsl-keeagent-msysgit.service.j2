@@ -13,6 +13,7 @@ ExecStart=/usr/bin/python3 \
         --no-daemon \
         --timeout 15 \
         --pidfile /var/run/wsl-keeagent-msysgit.pid \
+        --ip-file "{{ wsl_keeagent_host_address_file }}" \
         "{{ wsl_keeagent_msysgit_socket }}:{{ wsl_keeagent_ssh_agent_socket }}"
 
 [Install]

@@ -53,10 +53,16 @@
     - name: "Deploy systemd system service unit (npiperelay)"
       become: true
       ansible.builtin.template:
-        src: "{{ templates_root }}/systemd/wsl-keeagent-npiperelay.service.j2"
+        src: "{{ templates_root }}/etc/systemd/wsl-keeagent-npiperelay.service.j2"
         dest: "/etc/systemd/system/wsl-keeagent.service"
         mode: '0644'
       register: wsl_keeagent_unit
+
+    - name: "Reload systemd daemon"
+      become: true
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: wsl_keeagent_unit.changed
 
   when: wsl_keeagent_socket_type | default('npiperelay') == 'npiperelay'
   tags: wsl-keeagent
@@ -73,10 +79,16 @@
 
     - name: "Deploy systemd system service unit (msysgit)"
       ansible.builtin.template:
-        src: "{{ templates_root }}/systemd/wsl-keeagent-msysgit.service.j2"
+        src: "{{ templates_root }}/etc/systemd/wsl-keeagent-msysgit.service.j2"
         dest: "/etc/systemd/system/wsl-keeagent.service"
         mode: '0644'
       register: wsl_keeagent_unit
+
+    - name: "Reload systemd daemon"
+      become: true
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: wsl_keeagent_unit.changed
 
   tags: wsl-keeagent
   when: wsl_keeagent_socket_type | default('npiperelay') == 'msysgit'
@@ -84,16 +96,9 @@
 - name: "Deploy system-wide environment variable script"
   become: true
   ansible.builtin.template:
-    src: "{{ templates_root }}/wsl-keeagent.sh.j2"
+    src: "{{ templates_root }}/etc/profile.d/wsl-keeagent.sh.j2"
     dest: "/etc/profile.d/wsl-keeagent.sh"
     mode: '0644'
-  tags: wsl-keeagent
-
-- name: "Reload systemd daemon"
-  become: true
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: wsl_keeagent_unit.changed
   tags: wsl-keeagent
 
 - name: "Enable and start the bridge service"
