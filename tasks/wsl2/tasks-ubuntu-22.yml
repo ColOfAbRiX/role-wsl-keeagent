@@ -9,89 +9,57 @@
     state: present
   tags: wsl-keeagent
 
-- name: "Ensure user systemd directory exists"
-  ansible.builtin.file:
-    path: "{{ ansible_user_dir }}/.config/systemd/user"
+- name: "Create temporary directory for bridge download"
+  ansible.builtin.tempfile:
     state: directory
-    mode: '0755'
+    suffix: wsl_keeagent
+  register: wsl_keeagent_tmp
   tags: wsl-keeagent
 
-- name: "Configure nPipeRelay"
-  block:
-
-    - name: "Create temporary directory for bridge download"
-      ansible.builtin.tempfile:
-        state: directory
-        suffix: wsl_keeagent
-      register: wsl_keeagent_tmp
-
-    - name: "Download wsl-ssh-agent release"
-      ansible.builtin.get_url:
-        url: "https://github.com/rupor-github/wsl-ssh-agent/releases/download/v{{ wsl_keeagent_agent_version }}/wsl-ssh-agent.zip"
-        dest: "{{ wsl_keeagent_tmp.path }}/wsl-ssh-agent.zip"
-        mode: '0644'
-
-    - name: "Unarchive the agent binary"
-      ansible.builtin.unarchive:
-        src: "{{ wsl_keeagent_tmp.path }}/wsl-ssh-agent.zip"
-        dest: "{{ wsl_keeagent_tmp.path }}"
-        remote_src: yes
-
-    - name: "Install bridge binary to system path"
-      become: true
-      ansible.builtin.copy:
-        src: "{{ wsl_keeagent_tmp.path }}/{{ wsl_keeagent_exec_name }}"
-        dest: "{{ wsl_keeagent_exec_path }}/{{ wsl_keeagent_exec_name }}"
-        mode: '0755'
-        remote_src: yes
-
-    - name: "Remove temporary download files"
-      ansible.builtin.file:
-        path: "{{ wsl_keeagent_tmp.path }}"
-        state: absent
-
-    - name: "Deploy systemd system service unit (npiperelay)"
-      become: true
-      ansible.builtin.template:
-        src: "{{ templates_root }}/etc/systemd/wsl-keeagent-npiperelay.service.j2"
-        dest: "/etc/systemd/system/wsl-keeagent.service"
-        mode: '0644'
-      register: wsl_keeagent_unit
-
-    - name: "Reload systemd daemon"
-      become: true
-      ansible.builtin.systemd:
-        daemon_reload: true
-      when: wsl_keeagent_unit.changed
-
-  when: wsl_keeagent_socket_type | default('npiperelay') == 'npiperelay'
+- name: "Download wsl-ssh-agent release"
+  ansible.builtin.get_url:
+    url: "https://github.com/rupor-github/wsl-ssh-agent/releases/download/v{{ wsl_keeagent_agent_version }}/wsl-ssh-agent.zip"
+    dest: "{{ wsl_keeagent_tmp.path }}/wsl-ssh-agent.zip"
+    mode: '0644'
   tags: wsl-keeagent
 
-- name: "Configure nPipeRelay"
+- name: "Unarchive the agent binary"
+  ansible.builtin.unarchive:
+    src: "{{ wsl_keeagent_tmp.path }}/wsl-ssh-agent.zip"
+    dest: "{{ wsl_keeagent_tmp.path }}"
+    remote_src: yes
+  tags: wsl-keeagent
+
+- name: "Install bridge binary to system path"
   become: true
-  block:
-
-    - name: "Copy msysgit socket proxy script"
-      ansible.builtin.copy:
-        src: "wsl1/ubuntu-22/{{ wsl_keeagent_script_name }}"
-        dest: "{{ wsl_keeagent_script_path }}/{{ wsl_keeagent_script_name }}"
-        mode: '0755'
-
-    - name: "Deploy systemd system service unit (msysgit)"
-      ansible.builtin.template:
-        src: "{{ templates_root }}/etc/systemd/wsl-keeagent-msysgit.service.j2"
-        dest: "/etc/systemd/system/wsl-keeagent.service"
-        mode: '0644'
-      register: wsl_keeagent_unit
-
-    - name: "Reload systemd daemon"
-      become: true
-      ansible.builtin.systemd:
-        daemon_reload: true
-      when: wsl_keeagent_unit.changed
-
+  ansible.builtin.copy:
+    src: "{{ wsl_keeagent_tmp.path }}/{{ wsl_keeagent_exec_name }}"
+    dest: "{{ wsl_keeagent_exec_path }}/{{ wsl_keeagent_exec_name }}"
+    mode: '0755'
+    remote_src: yes
   tags: wsl-keeagent
-  when: wsl_keeagent_socket_type | default('npiperelay') == 'msysgit'
+
+- name: "Remove temporary download files"
+  ansible.builtin.file:
+    path: "{{ wsl_keeagent_tmp.path }}"
+    state: absent
+  tags: wsl-keeagent
+
+- name: "Deploy systemd system service unit"
+  become: true
+  ansible.builtin.template:
+    src: "{{ templates_root }}/etc/systemd/wsl-keeagent.service.j2"
+    dest: "/etc/systemd/system/wsl-keeagent.service"
+    mode: '0644'
+  register: wsl_keeagent_unit
+  tags: wsl-keeagent
+
+- name: "Reload systemd daemon"
+  become: true
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: wsl_keeagent_unit.changed
+  tags: wsl-keeagent
 
 - name: "Deploy system-wide environment variable script"
   become: true
