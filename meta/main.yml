@@ -1,6 +1,6 @@
 ---
 galaxy_info:
-  author: Fabrizio Colonna <colofabrix@tin.it>
+  author: Fabrizio Colonna (@ColOfAbRiX)
   description: WSL integration with KeePass KeeAgent for SSH agent forwarding
   license: MIT
   min_ansible_version: "2.10"

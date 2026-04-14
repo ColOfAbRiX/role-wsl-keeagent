@@ -15,10 +15,20 @@
     files_root: "{{ 'wsl2' if ansible_kernel is search('WSL2') else 'wsl1' }}/{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}"
   tags: wsl-keeagent
 
-- name: "Include OS/WSL Variables"
-  ansible.builtin.include_vars: "{{ wsl_version }}/vars-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}.yml"
+- name: "Load Variables"
+  ansible.builtin.include_vars: "{{ lookup('first_found', files) }}"
+  vars:
+    files:
+      - "vars/{{ wsl_version }}/vars-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}.yml"
+      - "vars/{{ wsl_version }}/vars-{{ ansible_distribution | lower }}.yml"
+      - "vars/{{ wsl_version }}/vars-{{ ansible_os_family | lower }}.yml"
   tags: wsl-keeagent
 
-- name: "Run OS/WSL Tasks"
-  ansible.builtin.include_tasks: "{{ wsl_version }}/tasks-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version }}.yml"
+- name: "Run Environment Tasks"
+  ansible.builtin.include_tasks: "{{ lookup('first_found', files) }}"
+  vars:
+    files:
+      - "tasks/{{ wsl_version }}/tasks-{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+      - "tasks/{{ wsl_version }}/tasks-{{ ansible_distribution | lower }}.yml"
+      - "tasks/{{ wsl_version }}/tasks-{{ ansible_os_family | lower }}.yml"
   tags: wsl-keeagent
